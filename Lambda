@@ -1,0 +1,131 @@
+function handler () {
+    ################################
+    ## Variables
+    ################################
+    EVENT_DATA=$1
+    TMP1="/tmp/$(basename "$0").1.tmp"
+    TMP2="/tmp/$(basename "$0").2.tmp"
+
+    ## zdump -v /usr/share/zoneinfo/Asia/Jerusalem 
+    ## The Timezone data should be created before the running of the Lambda
+    ## and stored in what you have configured as: ${LIBBUCKET}${LIB}
+    LIBBUCKET="s3://<your bucket>/"
+    LIB="timezones-data.txt"
+ 
+    ## What EVENTS do you need to update? seperated by spaces if more than 1   
+    EVENTS="TestDaylightSavings TestDaylightSavings2"
+    ## This needs to be the name of he CloudWatch Event Rule that triggers the Lambda
+    ME="TestDaylightSavings"
+
+    SIXMONTHS=`date +%Y --date "+6 months"`
+
+    ################################
+    ## Functions
+    ################################
+
+    function logit () {
+        
+        echo "$INVOCATION_ID $1" >&2
+
+    }
+    
+    function Modify {
+        HR=$1
+        logit "Received HR $HR"
+
+        if [ "$ISDST" == 0 ]; then
+                # remove 1 hour
+                logit "movem back"
+                let "HR = $HR - 1"
+        else
+                # add 1 hour
+                logit "movem up"
+                let "HR = $HR + 1"
+        fi
+        logit "HR $HR"
+        #return $HR
+    }
+
+    # Bash2 Layer Settings required
+    export PYTHONPATH="/opt/lib/:/opt/lib/python/:/opt/lib/awscli/:/opt/lib/python/lib-dynload"
+    export PYTHONHOME="/opt/"
+    export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/lib/python/lib-dynload"
+
+    
+    ################################
+    ## Main Code
+    ################################
+    
+    logit "EVENT_DATA $EVENT_DATA"
+
+    ## Get Jerusalem Timezone Data
+    logit "Fetching ${LIBBUCKET}${LIB} - LIBBUCKET $LIBBUCKET"
+    aws s3 cp ${LIBBUCKET}${LIB} /tmp/ 1> /dev/null >&1
+    
+    logit "executing grep search
+        grep \"$SIXMONTHS\" /tmp/${LIB} | head -n 1 > $TMP1 || true"
+    grep "$SIXMONTHS" /tmp/${LIB} | head -n 1 > $TMP1 || true
+    
+    OUTPUT=`cat $TMP1`
+    logit "OUTPUT $OUTPUT"
+    
+    ISDST=`echo $OUTPUT | grep -c "isdst=1" || true`
+    
+    logit "ISDST $ISDST"
+    
+    # Get Event Schedules
+    for SCRIPT in $EVENTS; do
+        logit "SCRIPT $SCRIPT"
+        
+        ## ** Need to figure out the right IAM permissions for this **
+        aws events describe-rule --name $SCRIPT | grep ScheduleExpression | cut -d \" -f 4 > $TMP2 || true
+        LINE=`cat $TMP2`
+                logit "LINE $LINE"
+        HOUR=`echo "$LINE" | cut -d \  -f 2`
+        STAT=`echo "$HOUR" | grep -c "-" || true`
+        logit "HOUR $HOUR STAT $STAT"
+        if [ "$STAT" == "1" ]; then
+                # Split on - and modify both sides
+                START=`echo $HOUR | cut -d - -f 1`
+                END=`echo $HOUR | cut -d - -f 2`
+                logit "START $START END $END HOUR $HOUR"
+                Modify $START
+                START="$HR"
+                Modify $END
+                END="$HR"
+                HOUR="${START}-${END}"
+        else
+                #just modify
+                logit "Just Modify Hour"
+                Modify $HOUR
+                HOUR="$HR"
+        fi
+        logit "Need to Update HOUR $HOUR"
+        
+    ## Here update the rules
+    FIRST=`echo "$LINE" | cut -d \  -f 1`
+    LAST=`echo "$LINE" | cut -d \  -f 3-`
+    SET="$FIRST $HOUR $LAST"
+    logit "Before: LINE $LINE After: SET $SET"
+
+    logit "Executing: aws events put-rule --schedule-expression \"$SET\" --name $SCRIPT"
+    aws events put-rule --schedule-expression "$SET" --name $SCRIPT
+
+    done
+
+## and the next time to update for daylight savings (aka the timer for this script)
+    logit "Executing the final update for the $ME lambda"
+    FULLDATE=`echo $OUTPUT | cut -d = -f 2`
+    NEWMONTH=`echo $FULLDATE | awk '{print $2}'`
+    NEWDAY=`echo $FULLDATE | awk '{print $3}'`
+    NEWYEAR=`echo $FULLDATE | awk '{print $5}'`
+    SCRIPT="$ME"
+    logit "FULLDATE $FULLDATE NEWMONTH $NEWMONTH NEWDAY $NEWDAY NEWYEAR $NEWYEAR"
+    SET="cron(2 2 $NEWDAY $NEWMONTH ? $NEWYEAR)"
+    
+    logit "Executing: aws events put-rule --schedule-expression \"$SET\" --name $SCRIPT"
+    aws events put-rule --schedule-expression "${SET}" --name $SCRIPT
+    
+    RESPONSE="{\"statusCode\": 200, \"body\": \"Hello from Lambda!\"}"
+    echo $RESPONSE
+}
