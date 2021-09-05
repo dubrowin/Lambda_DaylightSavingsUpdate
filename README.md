@@ -1,6 +1,6 @@
 # Lambda_DaylightSavingsUpdate
 
-This Lambda is using the Bash2 [1] Layer which is an update to the Bash Layer by gkrizek [2] for Amazon Linux 2.
+This Lambda is using the [Bash2 \[1\]](https://github.com/dubrowin/Bash2-Lambda/) Layer which is an update to the [Bash Layer by gkrizek \[2\]](https://github.com/gkrizek/bash-lambda-layer) for Amazon Linux 2.
 
 # Prerequisites
 
@@ -70,6 +70,8 @@ So now you are ready to create your Bash2 Lambda.
  - Modify ```ME``` to be the CloudWatch Event Rule that executes your Lambda
 
 You should be ready to test
+
+**NOTE:** The script does not currently handle switching days. So if you need the add and/or remove hour to change days, the API call will probably fail.
 
 [1] https://github.com/dubrowin/Bash2-Lambda/
 [2] https://github.com/gkrizek/bash-lambda-layer
